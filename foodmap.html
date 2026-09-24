@@ -357,20 +357,8 @@ function loadGoogleMapsScript(apiKey){
   });
 }
 
-function loadMarkerClustererLib(){
-  if(window.markerClusterer) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js';
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('clusterer_load_fail'));
-    document.head.appendChild(s);
-  });
-}
-
 function initGoogle(apiKey){
   return loadGoogleMapsScript(apiKey)
-    .then(() => loadMarkerClustererLib())
     .then(() => {
       engine = 'google';
       gmap = new google.maps.Map(document.getElementById('map'), {
@@ -408,16 +396,78 @@ function initGoogle(apiKey){
         marker._rec = r;
         return marker;
       });
+      // Re-cluster whenever the view settles (pan/zoom/initial load) instead
+      // of relying on a third-party clustering library — this keeps the
+      // cluster colors exactly matching each category (brown/navy/green),
+      // which an external library's default renderer would not do.
+      gmap.addListener('idle', rebuildGoogle);
       rebuildGoogle();
     });
 }
 
+function clusterBubbleSvg(count, color){
+  const size = count < 10 ? 34 : count < 30 ? 42 : 52;
+  const fontSize = size > 44 ? 15 : 13;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">`
+    + `<circle cx="${size/2}" cy="${size/2}" r="${size/2-2}" fill="${color}" fill-opacity="0.88" stroke="#fff" stroke-width="2"/>`
+    + `<text x="50%" y="50%" text-anchor="middle" dy=".35em" font-family="'Noto Sans TC',sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">${count}</text>`
+    + `</svg>`;
+  return { size, url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg) };
+}
+
+let gClusterMarkers = [];
+
 function rebuildGoogle(){
-  if(gClusterer){ gClusterer.clearMarkers ? gClusterer.clearMarkers() : gMarkers.forEach(m => m.setMap(null)); }
+  if(!gmap || !gmap.getProjection()) return; // projection not ready on first paint yet
+  gClusterMarkers.forEach(m => m.setMap(null));
+  gClusterMarkers = [];
   gMarkers.forEach(m => m.setMap(null));
-  const visible = gMarkers.filter(m => currentCat === 'all' || m._rec.cat === currentCat);
-  gClusterer = new markerClusterer.MarkerClusterer({ map: gmap, markers: visible });
-  document.getElementById('countPill').textContent = `共 ${visible.length} 間`;
+
+  const zoom = gmap.getZoom();
+  const scale = Math.pow(2, zoom);
+  const gridPx = 56; // clustering radius in screen pixels
+  const proj = gmap.getProjection();
+  const cats = ['500碗', '500盤', '亞洲100盤'];
+  let total = 0;
+
+  cats.forEach(cat => {
+    if(currentCat !== 'all' && currentCat !== cat) return;
+    const pts = gMarkers.filter(m => m._rec.cat === cat);
+    const buckets = {};
+    pts.forEach(m => {
+      const wp = proj.fromLatLngToPoint(m.getPosition());
+      const gx = Math.floor(wp.x * scale / gridPx), gy = Math.floor(wp.y * scale / gridPx);
+      const key = gx + '_' + gy;
+      if(!buckets[key]) buckets[key] = [];
+      buckets[key].push(m);
+    });
+    Object.values(buckets).forEach(group => {
+      total += group.length;
+      if(group.length === 1){
+        group[0].setMap(gmap);
+        return;
+      }
+      let sLat = 0, sLng = 0;
+      group.forEach(m => { const p = m.getPosition(); sLat += p.lat(); sLng += p.lng(); });
+      const center = {lat: sLat / group.length, lng: sLng / group.length};
+      const { size, url } = clusterBubbleSvg(group.length, tierColor(cat));
+      const bubble = new google.maps.Marker({
+        position: center,
+        icon: {
+          url, scaledSize: new google.maps.Size(size, size),
+          anchor: new google.maps.Point(size/2, size/2)
+        },
+        zIndex: 1000 + group.length,
+        map: gmap
+      });
+      bubble.addListener('click', () => {
+        gmap.panTo(center);
+        gmap.setZoom(Math.min(zoom + 3, 19));
+      });
+      gClusterMarkers.push(bubble);
+    });
+  });
+  document.getElementById('countPill').textContent = `共 ${total} 間`;
 }
 
 // =====================================================================
