@@ -235,7 +235,9 @@ function jumpToCity(c){
   }
 }
 
-function selectRecord(idx){
+function selectRecord(idx, opts){
+  opts = opts || {};
+  const recenter = opts.recenter !== false;
   const r = RECORDS[idx];
   const cls = catClass(r.cat);
   const gmapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(r.lat + ',' + r.lng);
@@ -247,6 +249,7 @@ function selectRecord(idx){
     <div class="p-row"><b>縣市 / 行政區</b>${r.city}${r.dist ? ' '+r.dist : ''}</div>
     <a class="p-link" href="${gmapsUrl}" target="_blank" rel="noopener">在 Google 地圖開啟 →</a>
   `;
+  if(!recenter) return;
   if(engine === 'leaflet'){
     map.setView([r.lat, r.lng], 17, {animate:true});
   } else if(engine === 'google'){
@@ -373,17 +376,34 @@ function initGoogle(apiKey){
         center: {lat:23.7, lng:121.0}, zoom: 8,
         streetViewControl: false, fullscreenControl: false
       });
+      const infoWindow = new google.maps.InfoWindow();
       gMarkers = RECORDS.map((r, idx) => {
         const color = tierColor(r.cat);
         const marker = new google.maps.Marker({
           position: {lat:r.lat, lng:r.lng},
+          title: r.name,
           icon: {
-            path: google.maps.SymbolPath.CIRCLE, scale: 7,
-            fillColor: color, fillOpacity: 0.92,
-            strokeColor: '#fff', strokeWeight: 1.5
-          }
+            path: google.maps.SymbolPath.CIRCLE, scale: 9,
+            fillColor: color, fillOpacity: 1,
+            strokeColor: '#ffffff', strokeWeight: 2
+          },
+          zIndex: 10
         });
-        marker.addListener('click', () => selectRecord(idx));
+        marker.addListener('click', () => {
+          const cls = catClass(r.cat);
+          const gmapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(r.lat + ',' + r.lng);
+          infoWindow.setContent(
+            `<div style="min-width:180px;">
+               <span class="pop-tier ${cls}">${r.cat}｜${r.tier}</span>
+               <div class="pop-name">${r.name}</div>
+               <div class="pop-addr">${r.addr}</div>
+               ${r.dishes ? `<div class="pop-addr" style="margin-top:4px;">${r.dishes}</div>` : ''}
+               <a href="${gmapsUrl}" target="_blank" rel="noopener" style="font-size:12px;">在 Google 地圖開啟 →</a>
+             </div>`
+          );
+          infoWindow.open({ map: gmap, anchor: marker });
+          selectRecord(idx, {recenter:false});
+        });
         marker._rec = r;
         return marker;
       });
